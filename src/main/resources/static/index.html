@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 智能客服工作台</title>
+    <link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+<div class="app-shell">
+    <aside class="sidebar">
+        <div class="brand">
+            <div class="brand-mark">AI</div>
+            <div>
+                <h1>智能客服</h1>
+                <p>RAG 问答工作台</p>
+            </div>
+        </div>
+
+        <section class="panel">
+            <div class="panel-title">服务状态</div>
+            <div class="status-row">
+                <span id="healthDot" class="status-dot"></span>
+                <span id="healthText">检查中</span>
+            </div>
+        </section>
+
+        <section class="panel">
+            <label class="field-label" for="knowledgeBaseSelect">知识库</label>
+            <select id="knowledgeBaseSelect">
+                <option value="">加载中...</option>
+            </select>
+            <button id="refreshKnowledgeBtn" class="secondary-btn" type="button">刷新知识库</button>
+        </section>
+
+        <section class="panel conversation-panel">
+            <div class="panel-title">当前会话</div>
+            <div class="conversation-id" id="conversationIdText">尚未开始</div>
+            <button id="newConversationBtn" class="secondary-btn" type="button">新建会话</button>
+        </section>
+    </aside>
+
+    <main class="chat-workspace">
+        <header class="workspace-header">
+            <div>
+                <h2>客服问答</h2>
+                <p id="workspaceSubtitle">请选择知识库后开始提问</p>
+            </div>
+            <div id="toast" class="toast" role="status" aria-live="polite"></div>
+        </header>
+
+        <section id="messageList" class="message-list" aria-live="polite">
+            <div class="empty-state">
+                <strong>开始一次知识库问答</strong>
+                <span>选择左侧知识库，输入用户问题，系统会返回回答和引用来源。</span>
+            </div>
+        </section>
+
+        <form id="chatForm" class="composer">
+            <textarea id="questionInput" rows="3" placeholder="输入客户问题，例如：过保产品还能维修吗？"></textarea>
+            <button id="sendBtn" class="primary-btn" type="submit">发送</button>
+        </form>
+    </main>
+
+    <aside class="sources-panel">
+        <div class="sources-header">
+            <div>
+                <h2>来源片段</h2>
+                <p>本轮回答依据</p>
+            </div>
+        </div>
+        <div id="sourcesList" class="sources-list">
+            <div class="empty-sources">暂无来源片段</div>
+        </div>
+    </aside>
+</div>
+
+<script src="/js/app.js"></script>
+</body>
+</html>

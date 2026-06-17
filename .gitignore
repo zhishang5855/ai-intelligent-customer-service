@@ -1,0 +1,13 @@
+target/
+data/
+.idea/
+*.iml
+.vscode/
+*.log
+.env
+.env.*
+config/local-secrets.yml
+config/*.local.yml
+src/main/resources/application-local.yml
+src/main/resources/application-prod.yml
+src/main/resources/application-*.local.yml
