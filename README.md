@@ -136,6 +136,21 @@ http://localhost:8080/
 
 ## 快速验收
 
+默认测试账号：
+
+```text
+用户名：test
+密码：123456
+```
+
+登录接口：
+
+```powershell
+curl -X POST http://localhost:8080/api/auth/login `
+  -H "Content-Type: application/json" `
+  -d "{\"username\":\"test\",\"password\":\"123456\"}"
+```
+
 创建知识库：
 
 ```powershell

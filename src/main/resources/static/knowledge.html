@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>知识库管理 - AI 智能客服</title>
+    <link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+<div class="page-shell">
+    <header class="topbar">
+        <div class="brand compact-brand">
+            <div class="brand-mark">AI</div>
+            <div>
+                <h1>知识库管理</h1>
+                <p id="knowledgeUserText">未登录</p>
+            </div>
+        </div>
+        <nav class="topbar-actions">
+            <a class="link-btn" href="/">客服对话</a>
+            <button id="knowledgeLogoutBtn" class="ghost-btn" type="button">退出</button>
+        </nav>
+    </header>
+
+    <main class="knowledge-layout">
+        <section class="workspace-card">
+            <div class="section-header">
+                <div>
+                    <h2>创建知识库</h2>
+                    <p>第一阶段先完成入口和基础列表，文档上传管理放到下一阶段继续扩展。</p>
+                </div>
+            </div>
+            <form id="knowledgeForm" class="knowledge-form">
+                <div>
+                    <label class="field-label" for="knowledgeNameInput">名称</label>
+                    <input id="knowledgeNameInput" maxlength="100" placeholder="例如：售后知识库">
+                </div>
+                <div>
+                    <label class="field-label" for="knowledgeDescInput">描述</label>
+                    <textarea id="knowledgeDescInput" rows="4" maxlength="500" placeholder="知识库用途说明"></textarea>
+                </div>
+                <button id="createKnowledgeBtn" class="primary-btn full-btn" type="submit">创建知识库</button>
+                <div id="knowledgeMessage" class="form-message" role="status" aria-live="polite"></div>
+            </form>
+        </section>
+
+        <section class="workspace-card">
+            <div class="section-header">
+                <div>
+                    <h2>知识库列表</h2>
+                    <p id="knowledgeListHint">加载中</p>
+                </div>
+                <button id="refreshKnowledgeListBtn" class="secondary-btn compact-btn" type="button">刷新</button>
+            </div>
+            <div id="knowledgeList" class="knowledge-list"></div>
+        </section>
+    </main>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/auth.js"></script>
+<script src="/js/knowledge.js"></script>
+</body>
+</html>

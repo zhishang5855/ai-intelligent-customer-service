@@ -1,32 +1,49 @@
 (function () {
     const state = {
+        user: null,
         conversationId: null,
         knowledgeBases: [],
         busy: false
     };
 
-    const els = {
-        healthDot: document.getElementById("healthDot"),
-        healthText: document.getElementById("healthText"),
-        knowledgeBaseSelect: document.getElementById("knowledgeBaseSelect"),
-        refreshKnowledgeBtn: document.getElementById("refreshKnowledgeBtn"),
-        conversationIdText: document.getElementById("conversationIdText"),
-        newConversationBtn: document.getElementById("newConversationBtn"),
-        workspaceSubtitle: document.getElementById("workspaceSubtitle"),
-        toast: document.getElementById("toast"),
-        messageList: document.getElementById("messageList"),
-        chatForm: document.getElementById("chatForm"),
-        questionInput: document.getElementById("questionInput"),
-        sendBtn: document.getElementById("sendBtn"),
-        sourcesList: document.getElementById("sourcesList")
-    };
+    const els = {};
 
     document.addEventListener("DOMContentLoaded", init);
 
     function init() {
+        state.user = window.AicsAuth.requireLogin();
+        if (!state.user) {
+            return;
+        }
+
+        mapElements();
+        els.currentUserText.textContent = displayName(state.user);
+        window.AicsAuth.bindLogout(els.logoutBtn);
         bindEvents();
         checkHealth();
         loadKnowledgeBases();
+    }
+
+    function mapElements() {
+        [
+            "currentUserText",
+            "logoutBtn",
+            "healthDot",
+            "healthText",
+            "knowledgeBaseSelect",
+            "refreshKnowledgeBtn",
+            "conversationIdText",
+            "newConversationBtn",
+            "workspaceSubtitle",
+            "toast",
+            "messageList",
+            "chatForm",
+            "questionInput",
+            "sendBtn",
+            "sourcesList"
+        ].forEach(function (id) {
+            els[id] = document.getElementById(id);
+        });
     }
 
     function bindEvents() {
@@ -46,7 +63,7 @@
 
     async function checkHealth() {
         try {
-            await requestJson("/api/health");
+            await window.AicsApi.requestJson("/api/health");
             setHealth(true, "后端在线");
         } catch (error) {
             setHealth(false, "后端不可用");
@@ -57,7 +74,7 @@
     async function loadKnowledgeBases() {
         els.knowledgeBaseSelect.innerHTML = '<option value="">普通对话，不使用知识库</option><option value="__loading" disabled>加载中...</option>';
         try {
-            const response = await requestJson("/api/knowledge-bases");
+            const response = await window.AicsApi.requestJson("/api/knowledge-bases");
             state.knowledgeBases = response.data || [];
             renderKnowledgeBases();
             showToast("知识库已刷新", "success");
@@ -109,13 +126,14 @@
         try {
             const payload = {
                 conversationId: state.conversationId,
+                userId: state.user.userId,
                 question: question
             };
             if (knowledgeBaseId) {
                 payload.knowledgeBaseId = Number(knowledgeBaseId);
             }
 
-            const response = await requestJson("/api/chat", {
+            const response = await window.AicsApi.requestJson("/api/chat", {
                 method: "POST",
                 headers: {"Content-Type": "application/json"},
                 body: JSON.stringify(payload)
@@ -132,20 +150,6 @@
         } finally {
             setBusy(false);
         }
-    }
-
-    async function requestJson(url, options) {
-        const response = await fetch(url, options);
-        let body = null;
-        try {
-            body = await response.json();
-        } catch (error) {
-            throw new Error("接口返回不是 JSON");
-        }
-        if (!response.ok || body.success === false) {
-            throw new Error((body && body.message) || ("请求失败：" + response.status));
-        }
-        return body;
     }
 
     function appendMessage(role, content) {
@@ -259,5 +263,9 @@
         if (empty) {
             empty.remove();
         }
+    }
+
+    function displayName(user) {
+        return (user.nickname || user.username || "当前用户") + "（ID: " + user.userId + "）";
     }
 })();
