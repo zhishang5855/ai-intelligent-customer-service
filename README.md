@@ -60,6 +60,7 @@ spring:
       api-key: your-api-key
       base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
       chat:
+        completions-path: /chat/completions
         options:
           model: qwen-plus
     ollama:
@@ -81,11 +82,23 @@ spring:
       api-key: your-zhipu-api-key
       base-url: https://open.bigmodel.cn/api/paas/v4
       chat:
+        completions-path: /chat/completions
         options:
           model: glm-4-plus
 ```
 
 环境变量仍然可用，适合 CI/CD 或临时覆盖配置。
+
+如果使用 OpenAI 官方接口，通常可以配置：
+
+```yaml
+spring:
+  ai:
+    openai:
+      base-url: https://api.openai.com
+      chat:
+        completions-path: /v1/chat/completions
+```
 
 ## 初始化数据库
 

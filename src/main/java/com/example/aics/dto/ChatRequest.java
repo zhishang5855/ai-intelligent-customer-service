@@ -1,14 +1,11 @@
 package com.example.aics.dto;
 
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotNull;
 
 public class ChatRequest {
 
     private Long conversationId;
     private Long userId;
-
-    @NotNull
     private Long knowledgeBaseId;
 
     @NotBlank

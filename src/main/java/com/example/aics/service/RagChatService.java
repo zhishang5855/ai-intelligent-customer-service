@@ -24,6 +24,7 @@ public class RagChatService {
     private final ConversationService conversationService;
     private final ObjectMapper objectMapper;
     private final String ragPromptTemplate;
+    private final String generalPromptTemplate;
 
     public RagChatService(ChatClient.Builder chatClientBuilder,
                           VectorSearchService vectorSearchService,
@@ -33,10 +34,8 @@ public class RagChatService {
         this.vectorSearchService = vectorSearchService;
         this.conversationService = conversationService;
         this.objectMapper = objectMapper;
-        this.ragPromptTemplate = StreamUtils.copyToString(
-                new ClassPathResource("prompts/rag-answer.st").getInputStream(),
-                StandardCharsets.UTF_8
-        );
+        this.ragPromptTemplate = readPrompt("prompts/rag-answer.st");
+        this.generalPromptTemplate = readPrompt("prompts/general-chat.st");
     }
 
     public ChatResponse chat(ChatRequest request) {
@@ -47,9 +46,15 @@ public class RagChatService {
         );
         conversationService.saveMessage(conversation.getId(), "user", request.getQuestion(), null);
 
-        List<SourceChunk> sources = vectorSearchService.search(request.getKnowledgeBaseId(), request.getQuestion());
         String history = conversationService.recentHistory(conversation.getId(), 8);
-        String prompt = buildPrompt(request.getQuestion(), history, sources);
+        boolean useKnowledgeBase = request.getKnowledgeBaseId() != null;
+        List<SourceChunk> sources = useKnowledgeBase
+                ? vectorSearchService.search(request.getKnowledgeBaseId(), request.getQuestion())
+                : List.of();
+        String prompt = useKnowledgeBase
+                ? buildRagPrompt(request.getQuestion(), history, sources)
+                : buildGeneralPrompt(request.getQuestion(), history);
+
         String answer = chatClient.prompt()
                 .user(prompt)
                 .call()
@@ -64,7 +69,13 @@ public class RagChatService {
         return response;
     }
 
-    private String buildPrompt(String question, String history, List<SourceChunk> sources) {
+    private String buildGeneralPrompt(String question, String history) {
+        return generalPromptTemplate
+                .replace("{history}", history == null ? "" : history)
+                .replace("{question}", question);
+    }
+
+    private String buildRagPrompt(String question, String history, List<SourceChunk> sources) {
         String context = sources.isEmpty()
                 ? "未检索到相关知识库内容。"
                 : sources.stream()
@@ -76,6 +87,13 @@ public class RagChatService {
                 .replace("{history}", history == null ? "" : history)
                 .replace("{context}", context)
                 .replace("{question}", question);
+    }
+
+    private String readPrompt(String location) throws IOException {
+        return StreamUtils.copyToString(
+                new ClassPathResource(location).getInputStream(),
+                StandardCharsets.UTF_8
+        );
     }
 
     private String toJson(List<SourceChunk> sources) {

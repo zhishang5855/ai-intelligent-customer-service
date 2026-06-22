@@ -13,7 +13,7 @@
             <div class="brand-mark">AI</div>
             <div>
                 <h1>智能客服</h1>
-                <p>RAG 问答工作台</p>
+                <p>普通对话 / RAG 问答</p>
             </div>
         </div>
 
@@ -26,9 +26,9 @@
         </section>
 
         <section class="panel">
-            <label class="field-label" for="knowledgeBaseSelect">知识库</label>
+            <label class="field-label" for="knowledgeBaseSelect">对话模式</label>
             <select id="knowledgeBaseSelect">
-                <option value="">加载中...</option>
+                <option value="">普通对话，不使用知识库</option>
             </select>
             <button id="refreshKnowledgeBtn" class="secondary-btn" type="button">刷新知识库</button>
         </section>
@@ -43,16 +43,16 @@
     <main class="chat-workspace">
         <header class="workspace-header">
             <div>
-                <h2>客服问答</h2>
-                <p id="workspaceSubtitle">请选择知识库后开始提问</p>
+                <h2>客服对话</h2>
+                <p id="workspaceSubtitle">当前模式：普通对话</p>
             </div>
             <div id="toast" class="toast" role="status" aria-live="polite"></div>
         </header>
 
         <section id="messageList" class="message-list" aria-live="polite">
             <div class="empty-state">
-                <strong>开始一次知识库问答</strong>
-                <span>选择左侧知识库，输入用户问题，系统会返回回答和引用来源。</span>
+                <strong>开始一次 AI 客服对话</strong>
+                <span>可以直接提问；选择知识库后，系统会基于知识库回答并展示引用来源。</span>
             </div>
         </section>
 
@@ -66,11 +66,11 @@
         <div class="sources-header">
             <div>
                 <h2>来源片段</h2>
-                <p>本轮回答依据</p>
+                <p>仅知识库模式显示</p>
             </div>
         </div>
         <div id="sourcesList" class="sources-list">
-            <div class="empty-sources">暂无来源片段</div>
+            <div class="empty-sources">普通对话无来源片段</div>
         </div>
     </aside>
 </div>

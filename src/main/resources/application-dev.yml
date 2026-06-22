@@ -20,6 +20,7 @@ spring:
       api-key: ${CHAT_API_KEY:dev-placeholder-key}
       base-url: ${CHAT_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode/v1}
       chat:
+        completions-path: ${CHAT_COMPLETIONS_PATH:/chat/completions}
         options:
           model: ${CHAT_MODEL:qwen-plus}
           temperature: ${CHAT_TEMPERATURE:0.2}

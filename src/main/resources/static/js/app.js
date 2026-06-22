@@ -32,7 +32,10 @@
     function bindEvents() {
         els.refreshKnowledgeBtn.addEventListener("click", loadKnowledgeBases);
         els.newConversationBtn.addEventListener("click", resetConversation);
-        els.knowledgeBaseSelect.addEventListener("change", updateSubtitle);
+        els.knowledgeBaseSelect.addEventListener("change", function () {
+            updateSubtitle();
+            renderSources([]);
+        });
         els.chatForm.addEventListener("submit", sendQuestion);
         els.questionInput.addEventListener("keydown", function (event) {
             if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
@@ -52,7 +55,7 @@
     }
 
     async function loadKnowledgeBases() {
-        els.knowledgeBaseSelect.innerHTML = '<option value="">加载中...</option>';
+        els.knowledgeBaseSelect.innerHTML = '<option value="">普通对话，不使用知识库</option><option value="__loading" disabled>加载中...</option>';
         try {
             const response = await requestJson("/api/knowledge-bases");
             state.knowledgeBases = response.data || [];
@@ -60,19 +63,23 @@
             showToast("知识库已刷新", "success");
         } catch (error) {
             state.knowledgeBases = [];
-            els.knowledgeBaseSelect.innerHTML = '<option value="">加载失败</option>';
+            els.knowledgeBaseSelect.innerHTML = '<option value="">普通对话，不使用知识库</option><option value="__failed" disabled>知识库加载失败</option>';
             showToast(error.message, "error");
         }
         updateSubtitle();
     }
 
     function renderKnowledgeBases() {
+        els.knowledgeBaseSelect.innerHTML = '<option value="">普通对话，不使用知识库</option>';
         if (!state.knowledgeBases.length) {
-            els.knowledgeBaseSelect.innerHTML = '<option value="">暂无知识库</option>';
+            const emptyOption = document.createElement("option");
+            emptyOption.value = "__empty";
+            emptyOption.disabled = true;
+            emptyOption.textContent = "暂无知识库";
+            els.knowledgeBaseSelect.appendChild(emptyOption);
             return;
         }
 
-        els.knowledgeBaseSelect.innerHTML = '<option value="">请选择知识库</option>';
         state.knowledgeBases.forEach(function (kb) {
             const option = document.createElement("option");
             option.value = kb.id;
@@ -89,10 +96,6 @@
 
         const knowledgeBaseId = els.knowledgeBaseSelect.value;
         const question = els.questionInput.value.trim();
-        if (!knowledgeBaseId) {
-            showToast("请先选择知识库", "error");
-            return;
-        }
         if (!question) {
             showToast("请输入问题", "error");
             return;
@@ -106,9 +109,12 @@
         try {
             const payload = {
                 conversationId: state.conversationId,
-                knowledgeBaseId: Number(knowledgeBaseId),
                 question: question
             };
+            if (knowledgeBaseId) {
+                payload.knowledgeBaseId = Number(knowledgeBaseId);
+            }
+
             const response = await requestJson("/api/chat", {
                 method: "POST",
                 headers: {"Content-Type": "application/json"},
@@ -148,7 +154,7 @@
 
         const meta = document.createElement("div");
         meta.className = "message-meta";
-        meta.textContent = role === "user" ? "客户" : "智能客服";
+        meta.textContent = role === "user" ? "用户" : "智能客服";
 
         const bubble = document.createElement("div");
         bubble.className = "message-bubble";
@@ -163,7 +169,10 @@
     function renderSources(sources) {
         els.sourcesList.innerHTML = "";
         if (!sources.length) {
-            els.sourcesList.innerHTML = '<div class="empty-sources">暂无来源片段</div>';
+            const empty = document.createElement("div");
+            empty.className = "empty-sources";
+            empty.textContent = els.knowledgeBaseSelect.value ? "暂无来源片段" : "普通对话无来源片段";
+            els.sourcesList.appendChild(empty);
             return;
         }
 
@@ -205,7 +214,7 @@
         state.conversationId = null;
         updateConversationText();
         els.messageList.innerHTML = '<div class="empty-state"><strong>已新建会话</strong><span>继续输入问题即可开始新的上下文。</span></div>';
-        els.sourcesList.innerHTML = '<div class="empty-sources">暂无来源片段</div>';
+        renderSources([]);
         showToast("已新建会话", "success");
     }
 
@@ -216,7 +225,7 @@
     function updateSubtitle() {
         const option = els.knowledgeBaseSelect.selectedOptions[0];
         const name = option && option.value ? option.textContent : "";
-        els.workspaceSubtitle.textContent = name ? "当前知识库：" + name : "请选择知识库后开始提问";
+        els.workspaceSubtitle.textContent = name ? "当前模式：知识库问答 - " + name : "当前模式：普通对话";
     }
 
     function setBusy(busy) {
