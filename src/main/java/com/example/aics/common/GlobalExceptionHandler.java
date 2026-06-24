@@ -8,6 +8,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -30,9 +31,22 @@ public class GlobalExceptionHandler {
         return ApiResponse.fail(ex.getMessage());
     }
 
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    @ResponseStatus(HttpStatus.PAYLOAD_TOO_LARGE)
+    public ApiResponse<Void> handleMaxUploadSize(MaxUploadSizeExceededException ex) {
+        return ApiResponse.fail("上传文件不能超过 20MB");
+    }
+
     @ExceptionHandler(AiChatException.class)
     @ResponseStatus(HttpStatus.BAD_GATEWAY)
     public ApiResponse<Void> handleAiChat(AiChatException ex) {
+        return ApiResponse.fail(ex.getMessage());
+    }
+
+    @ExceptionHandler(DocumentIngestException.class)
+    @ResponseStatus(HttpStatus.BAD_GATEWAY)
+    public ApiResponse<Void> handleDocumentIngest(DocumentIngestException ex) {
+        log.warn("Document ingest failed: {}", ex.getMessage());
         return ApiResponse.fail(ex.getMessage());
     }
 

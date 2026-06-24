@@ -1,5 +1,7 @@
 package com.example.aics.service;
 
+import com.example.aics.common.AiChatException;
+import com.example.aics.common.DocumentIngestException;
 import com.example.aics.config.RagProperties;
 import com.example.aics.dto.SourceChunk;
 import org.springframework.ai.embedding.EmbeddingModel;
@@ -26,19 +28,23 @@ public class VectorSearchService {
     }
 
     public void upsertChunk(Long chunkId, Long knowledgeBaseId, Long documentId, String documentName, String content) {
-        float[] embedding = embeddingModel.embed(content);
-        vectorJdbcTemplate.update("""
-                        insert into rag_chunk_vector
-                            (chunk_id, knowledge_base_id, document_id, document_name, content, embedding)
-                        values (?, ?, ?, ?, ?, ?::vector)
-                        on conflict (chunk_id) do update set
-                            knowledge_base_id = excluded.knowledge_base_id,
-                            document_id = excluded.document_id,
-                            document_name = excluded.document_name,
-                            content = excluded.content,
-                            embedding = excluded.embedding
-                        """,
-                chunkId, knowledgeBaseId, documentId, documentName, content, toVectorLiteral(embedding));
+        float[] embedding = embedForIngest(content);
+        try {
+            vectorJdbcTemplate.update("""
+                            insert into rag_chunk_vector
+                                (chunk_id, knowledge_base_id, document_id, document_name, content, embedding)
+                            values (?, ?, ?, ?, ?, ?::vector)
+                            on conflict (chunk_id) do update set
+                                knowledge_base_id = excluded.knowledge_base_id,
+                                document_id = excluded.document_id,
+                                document_name = excluded.document_name,
+                                content = excluded.content,
+                                embedding = excluded.embedding
+                            """,
+                    chunkId, knowledgeBaseId, documentId, documentName, content, toVectorLiteral(embedding));
+        } catch (RuntimeException ex) {
+            throw new DocumentIngestException("向量入库失败，请检查 PostgreSQL pgvector 配置和连接状态。", ex);
+        }
     }
 
     public void deleteByDocumentId(Long documentId) {
@@ -46,36 +52,56 @@ public class VectorSearchService {
     }
 
     public List<SourceChunk> search(Long knowledgeBaseId, String question) {
-        float[] embedding = embeddingModel.embed(question);
+        float[] embedding = embedForSearch(question);
         String vector = toVectorLiteral(embedding);
-        return vectorJdbcTemplate.query("""
-                        select chunk_id,
-                               document_id,
-                               document_name,
-                               content,
-                               1 - (embedding <=> ?::vector) as score
-                          from rag_chunk_vector
-                         where knowledge_base_id = ?
-                         order by embedding <=> ?::vector
-                         limit ?
-                        """,
-                ps -> {
-                    ps.setString(1, vector);
-                    ps.setLong(2, knowledgeBaseId);
-                    ps.setString(3, vector);
-                    ps.setInt(4, ragProperties.getTopK());
-                },
-                (rs, rowNum) -> {
-                    SourceChunk source = new SourceChunk();
-                    source.setChunkId(rs.getLong("chunk_id"));
-                    source.setDocumentId(rs.getLong("document_id"));
-                    source.setDocumentName(rs.getString("document_name"));
-                    source.setContent(rs.getString("content"));
-                    source.setScore(rs.getDouble("score"));
-                    return source;
-                }).stream()
-                .filter(source -> source.getScore() >= ragProperties.getSimilarityThreshold())
-                .collect(Collectors.toList());
+        try {
+            return vectorJdbcTemplate.query("""
+                            select chunk_id,
+                                   document_id,
+                                   document_name,
+                                   content,
+                                   1 - (embedding <=> ?::vector) as score
+                              from rag_chunk_vector
+                             where knowledge_base_id = ?
+                             order by embedding <=> ?::vector
+                             limit ?
+                            """,
+                    ps -> {
+                        ps.setString(1, vector);
+                        ps.setLong(2, knowledgeBaseId);
+                        ps.setString(3, vector);
+                        ps.setInt(4, ragProperties.getTopK());
+                    },
+                    (rs, rowNum) -> {
+                        SourceChunk source = new SourceChunk();
+                        source.setChunkId(rs.getLong("chunk_id"));
+                        source.setDocumentId(rs.getLong("document_id"));
+                        source.setDocumentName(rs.getString("document_name"));
+                        source.setContent(rs.getString("content"));
+                        source.setScore(rs.getDouble("score"));
+                        return source;
+                    }).stream()
+                    .filter(source -> source.getScore() >= ragProperties.getSimilarityThreshold())
+                    .collect(Collectors.toList());
+        } catch (RuntimeException ex) {
+            throw new AiChatException("知识库向量检索失败，请检查 PostgreSQL pgvector 配置和连接状态。", ex);
+        }
+    }
+
+    private float[] embedForIngest(String content) {
+        try {
+            return embeddingModel.embed(content);
+        } catch (RuntimeException ex) {
+            throw new DocumentIngestException("Ollama embedding 服务不可用，请检查 Ollama 是否启动以及 embedding 模型是否可用。", ex);
+        }
+    }
+
+    private float[] embedForSearch(String question) {
+        try {
+            return embeddingModel.embed(question);
+        } catch (RuntimeException ex) {
+            throw new AiChatException("Ollama embedding 服务不可用，请检查 Ollama 是否启动以及 embedding 模型是否可用。", ex);
+        }
     }
 
     private String toVectorLiteral(float[] embedding) {

@@ -120,6 +120,9 @@ public class KnowledgeService {
         try {
             String text = documentParserService.parse(target, originalFilename);
             List<String> chunks = textChunkService.split(text);
+            if (chunks.isEmpty()) {
+                throw new DocumentIngestException("文档未解析出可用于问答的文本内容，请检查文件内容。");
+            }
             for (int i = 0; i < chunks.size(); i++) {
                 String chunkText = chunks.get(i);
                 KnowledgeChunk chunk = new KnowledgeChunk();
@@ -138,6 +141,12 @@ public class KnowledgeService {
             document.setParseStatus("DONE");
             documentMapper.updateById(document);
             return document;
+        } catch (DocumentIngestException ex) {
+            cleanupFailedIngest(document.getId());
+            document.setParseStatus("FAILED");
+            document.setErrorMessage(safeErrorMessage(ex));
+            documentMapper.updateById(document);
+            throw ex;
         } catch (Exception ex) {
             cleanupFailedIngest(document.getId());
             document.setParseStatus("FAILED");

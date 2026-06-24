@@ -7,6 +7,8 @@ import com.example.aics.dto.SourceChunk;
 import com.example.aics.entity.Conversation;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ClassPathResource;
@@ -24,6 +26,8 @@ import java.util.stream.Collectors;
 
 @Service
 public class RagChatService {
+
+    private static final Logger log = LoggerFactory.getLogger(RagChatService.class);
 
     private final ChatClient chatClient;
     private final VectorSearchService vectorSearchService;
@@ -118,6 +122,9 @@ public class RagChatService {
         List<SourceChunk> sources = useKnowledgeBase
                 ? vectorSearchService.search(request.getKnowledgeBaseId(), request.getQuestion())
                 : List.of();
+        if (useKnowledgeBase) {
+            logRetrievedSources(request.getKnowledgeBaseId(), sources);
+        }
         String prompt = useKnowledgeBase
                 ? buildRagPrompt(request.getQuestion(), history, sources)
                 : buildGeneralPrompt(request.getQuestion(), history);
@@ -196,6 +203,30 @@ public class RagChatService {
                 .replace("{history}", history == null ? "" : history)
                 .replace("{context}", context)
                 .replace("{question}", question);
+    }
+
+    private void logRetrievedSources(Long knowledgeBaseId, List<SourceChunk> sources) {
+        if (sources.isEmpty()) {
+            log.info("RAG sources: knowledgeBaseId={}, no matched chunks", knowledgeBaseId);
+            return;
+        }
+        sources.forEach(source -> log.info(
+                "RAG source: knowledgeBaseId={}, chunkId={}, documentId={}, documentName={}, score={}, contentPreview={}",
+                knowledgeBaseId,
+                source.getChunkId(),
+                source.getDocumentId(),
+                source.getDocumentName(),
+                String.format("%.4f", source.getScore()),
+                preview(source.getContent())
+        ));
+    }
+
+    private String preview(String content) {
+        if (content == null || content.isBlank()) {
+            return "";
+        }
+        String normalized = content.replaceAll("\\s+", " ").trim();
+        return normalized.length() > 120 ? normalized.substring(0, 120) + "..." : normalized;
     }
 
     private String readPrompt(String location) throws IOException {

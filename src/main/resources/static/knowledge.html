@@ -27,7 +27,7 @@
             <div class="section-header">
                 <div>
                     <h2>创建知识库</h2>
-                    <p>第一阶段先完成入口和基础列表，文档上传管理放到下一阶段继续扩展。</p>
+                    <p>创建后可上传文档并在客服对话中选择使用。</p>
                 </div>
             </div>
             <form id="knowledgeForm" class="knowledge-form">
@@ -44,7 +44,29 @@
             </form>
         </section>
 
-        <section class="workspace-card">
+        <section class="workspace-card document-card">
+            <div class="section-header">
+                <div>
+                    <h2 id="selectedKnowledgeTitle">文档管理</h2>
+                    <p id="selectedKnowledgeMeta">请选择一个知识库</p>
+                </div>
+                <button id="refreshDocumentListBtn" class="secondary-btn compact-btn" type="button" disabled>刷新</button>
+            </div>
+            <form id="documentUploadForm" class="document-upload-form">
+                <label class="upload-zone" for="documentFileInput">
+                    <span id="documentFileText">选择 TXT / MD / PDF / DOCX 文件，最大 20MB</span>
+                    <input id="documentFileInput" type="file" accept=".txt,.md,.markdown,.pdf,.docx" disabled>
+                </label>
+                <button id="uploadDocumentBtn" class="primary-btn compact-btn" type="submit" disabled>上传文档</button>
+            </form>
+            <div id="documentMessage" class="form-message" role="status" aria-live="polite"></div>
+            <div class="document-list-header">
+                <span id="documentListHint">未选择知识库</span>
+            </div>
+            <div id="documentList" class="document-list"></div>
+        </section>
+
+        <section class="workspace-card knowledge-list-card">
             <div class="section-header">
                 <div>
                     <h2>知识库列表</h2>
