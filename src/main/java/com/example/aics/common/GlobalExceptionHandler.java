@@ -31,6 +31,12 @@ public class GlobalExceptionHandler {
         return ApiResponse.fail(ex.getMessage());
     }
 
+    @ExceptionHandler(IllegalStateException.class)
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    public ApiResponse<Void> handleIllegalState(IllegalStateException ex) {
+        return ApiResponse.fail(ex.getMessage());
+    }
+
     @ExceptionHandler(MaxUploadSizeExceededException.class)
     @ResponseStatus(HttpStatus.PAYLOAD_TOO_LARGE)
     public ApiResponse<Void> handleMaxUploadSize(MaxUploadSizeExceededException ex) {

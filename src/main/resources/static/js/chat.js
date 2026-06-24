@@ -149,7 +149,7 @@
                 question: question
             };
             if (knowledgeBaseId) {
-                payload.knowledgeBaseId = Number(knowledgeBaseId);
+                payload.knowledgeBaseId = knowledgeBaseId;
             }
 
             await streamChat(payload, {

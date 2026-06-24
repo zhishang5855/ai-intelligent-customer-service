@@ -46,6 +46,38 @@ create table if not exists knowledge_base (
     index idx_kb_status (status)
 ) engine=InnoDB default charset=utf8mb4;
 
+set @column_exists = (
+    select count(*)
+      from information_schema.columns
+     where table_schema = database()
+       and table_name = 'knowledge_base'
+       and column_name = 'user_id'
+);
+set @ddl = if(
+    @column_exists = 0,
+    'alter table knowledge_base add column user_id bigint null after id',
+    'select 1'
+);
+prepare stmt from @ddl;
+execute stmt;
+deallocate prepare stmt;
+
+set @index_exists = (
+    select count(*)
+      from information_schema.statistics
+     where table_schema = database()
+       and table_name = 'knowledge_base'
+       and index_name = 'idx_kb_user_id'
+);
+set @ddl = if(
+    @index_exists = 0,
+    'alter table knowledge_base add index idx_kb_user_id (user_id)',
+    'select 1'
+);
+prepare stmt from @ddl;
+execute stmt;
+deallocate prepare stmt;
+
 create table if not exists knowledge_document (
     id bigint primary key,
     knowledge_base_id bigint not null,

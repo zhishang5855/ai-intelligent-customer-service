@@ -1,11 +1,15 @@
 package com.example.aics.dto;
 
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 
 public class CreateKnowledgeBaseRequest {
 
     @NotBlank
+    @Size(max = 100)
     private String name;
+
+    @Size(max = 500)
     private String description;
 
     public String getName() {

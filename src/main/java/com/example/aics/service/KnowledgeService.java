@@ -11,6 +11,8 @@ import com.example.aics.mapper.KnowledgeBaseMapper;
 import com.example.aics.mapper.KnowledgeChunkMapper;
 import com.example.aics.mapper.KnowledgeDocumentMapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -18,6 +20,9 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.DigestInputStream;
@@ -27,10 +32,13 @@ import java.util.Set;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 
 @Service
 public class KnowledgeService {
 
+    private static final Logger log = LoggerFactory.getLogger(KnowledgeService.class);
     private static final long MAX_UPLOAD_SIZE = 20L * 1024 * 1024;
     private static final Set<String> SUPPORTED_FILE_TYPES = Set.of("pdf", "docx", "txt", "md", "markdown");
 
@@ -61,8 +69,9 @@ public class KnowledgeService {
         this.objectMapper = objectMapper;
     }
 
-    public KnowledgeBase createKnowledgeBase(CreateKnowledgeBaseRequest request) {
+    public KnowledgeBase createKnowledgeBase(Long userId, CreateKnowledgeBaseRequest request) {
         KnowledgeBase knowledgeBase = new KnowledgeBase();
+        knowledgeBase.setUserId(userId);
         knowledgeBase.setName(request.getName());
         knowledgeBase.setDescription(request.getDescription());
         knowledgeBase.setStatus("ACTIVE");
@@ -70,23 +79,22 @@ public class KnowledgeService {
         return knowledgeBase;
     }
 
-    public List<KnowledgeBase> listKnowledgeBases() {
+    public List<KnowledgeBase> listKnowledgeBases(Long userId) {
         return knowledgeBaseMapper.selectList(new LambdaQueryWrapper<KnowledgeBase>()
+                .eq(KnowledgeBase::getUserId, userId)
                 .orderByDesc(KnowledgeBase::getCreatedAt));
     }
 
-    public List<KnowledgeDocument> listDocuments(Long knowledgeBaseId) {
+    public List<KnowledgeDocument> listDocuments(Long userId, Long knowledgeBaseId) {
+        ensureKnowledgeBaseOwned(userId, knowledgeBaseId);
         return documentMapper.selectList(new LambdaQueryWrapper<KnowledgeDocument>()
                 .eq(KnowledgeDocument::getKnowledgeBaseId, knowledgeBaseId)
                 .orderByDesc(KnowledgeDocument::getCreatedAt));
     }
 
     @Transactional(noRollbackFor = DocumentIngestException.class)
-    public KnowledgeDocument ingest(Long knowledgeBaseId, MultipartFile file) throws IOException {
-        KnowledgeBase knowledgeBase = knowledgeBaseMapper.selectById(knowledgeBaseId);
-        if (knowledgeBase == null) {
-            throw new IllegalArgumentException("Knowledge base not found: " + knowledgeBaseId);
-        }
+    public KnowledgeDocument ingest(Long userId, Long knowledgeBaseId, MultipartFile file) throws IOException {
+        ensureKnowledgeBaseOwned(userId, knowledgeBaseId);
         validateUpload(file);
 
         String originalFilename = cleanFilename(file.getOriginalFilename());
@@ -106,6 +114,13 @@ public class KnowledgeService {
             throw new IllegalArgumentException("文件名非法");
         }
         file.transferTo(target);
+
+        try {
+            validateStoredFile(target, fileType);
+        } catch (IOException | RuntimeException ex) {
+            deleteUploadedFileQuietly(target);
+            throw ex;
+        }
 
         String hash = sha256(target);
         KnowledgeDocument document = new KnowledgeDocument();
@@ -157,15 +172,27 @@ public class KnowledgeService {
     }
 
     @Transactional
-    public void deleteDocument(Long documentId) {
+    public void deleteDocument(Long userId, Long documentId) {
         KnowledgeDocument document = documentMapper.selectById(documentId);
         if (document == null) {
             return;
         }
+        ensureKnowledgeBaseOwned(userId, document.getKnowledgeBaseId());
+        deleteStoredFile(document);
         chunkMapper.delete(new LambdaQueryWrapper<KnowledgeChunk>()
                 .eq(KnowledgeChunk::getDocumentId, documentId));
         documentMapper.deleteById(documentId);
         vectorSearchService.deleteByDocumentId(documentId);
+    }
+
+    public KnowledgeBase ensureKnowledgeBaseOwned(Long userId, Long knowledgeBaseId) {
+        KnowledgeBase knowledgeBase = knowledgeBaseMapper.selectOne(new LambdaQueryWrapper<KnowledgeBase>()
+                .eq(KnowledgeBase::getId, knowledgeBaseId)
+                .eq(KnowledgeBase::getUserId, userId));
+        if (knowledgeBase == null) {
+            throw new IllegalArgumentException("知识库不存在或无权访问");
+        }
+        return knowledgeBase;
     }
 
     private String resolveFileType(String fileName) {
@@ -185,6 +212,75 @@ public class KnowledgeService {
         }
     }
 
+    private void validateStoredFile(Path path, String fileType) throws IOException {
+        if ("pdf".equals(fileType)) {
+            byte[] header = readHeader(path, 5);
+            String value = new String(header, java.nio.charset.StandardCharsets.US_ASCII);
+            if (!value.startsWith("%PDF-")) {
+                throw new IllegalArgumentException("PDF 文件格式不合法");
+            }
+            return;
+        }
+        if ("docx".equals(fileType)) {
+            validateDocx(path);
+            return;
+        }
+        if ("txt".equals(fileType) || "md".equals(fileType) || "markdown".equals(fileType)) {
+            validateUtf8Text(path);
+        }
+    }
+
+    private byte[] readHeader(Path path, int size) throws IOException {
+        byte[] bytes = new byte[size];
+        try (InputStream inputStream = Files.newInputStream(path)) {
+            int read = inputStream.read(bytes);
+            if (read < size) {
+                throw new IllegalArgumentException("文件内容不完整");
+            }
+            return bytes;
+        }
+    }
+
+    private void validateDocx(Path path) throws IOException {
+        boolean hasContentTypes = false;
+        boolean hasDocumentXml = false;
+        try (ZipInputStream zipInputStream = new ZipInputStream(Files.newInputStream(path))) {
+            ZipEntry entry;
+            while ((entry = zipInputStream.getNextEntry()) != null) {
+                String name = entry.getName();
+                if ("[Content_Types].xml".equals(name)) {
+                    hasContentTypes = true;
+                } else if ("word/document.xml".equals(name)) {
+                    hasDocumentXml = true;
+                }
+                if (hasContentTypes && hasDocumentXml) {
+                    return;
+                }
+            }
+        }
+        throw new IllegalArgumentException("DOCX 文件格式不合法");
+    }
+
+    private void validateUtf8Text(Path path) throws IOException {
+        byte[] bytes;
+        try (InputStream inputStream = Files.newInputStream(path)) {
+            bytes = inputStream.readNBytes(8192);
+        }
+        for (byte value : bytes) {
+            if (value == 0) {
+                throw new IllegalArgumentException("文本文件包含非法二进制内容");
+            }
+        }
+        try {
+            java.nio.charset.StandardCharsets.UTF_8.newDecoder()
+                    .onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT)
+                    .decode(ByteBuffer.wrap(bytes));
+        } catch (CharacterCodingException ex) {
+            throw new IllegalArgumentException("文本文件必须使用 UTF-8 编码");
+        }
+    }
+
     private String cleanFilename(String filename) {
         String value = filename == null ? "document" : filename;
         value = value.replace('\\', '/');
@@ -197,6 +293,32 @@ public class KnowledgeService {
             throw new IllegalArgumentException("文件名非法");
         }
         return value;
+    }
+
+    private void deleteStoredFile(KnowledgeDocument document) {
+        if (document.getFilePath() == null || document.getFilePath().isBlank()) {
+            return;
+        }
+        Path storageRoot = Path.of(ragProperties.getFileStorageDir()).toAbsolutePath().normalize();
+        Path filePath = Path.of(document.getFilePath()).toAbsolutePath().normalize();
+        if (!filePath.startsWith(storageRoot)) {
+            log.warn("Skip deleting file outside storage root, documentId={}, filePath={}", document.getId(), filePath);
+            throw new IllegalStateException("文档记录中的文件路径不在允许删除范围内");
+        }
+        try {
+            Files.deleteIfExists(filePath);
+        } catch (IOException ex) {
+            log.warn("Delete uploaded file failed, documentId={}, filePath={}", document.getId(), filePath, ex);
+            throw new IllegalStateException("文档记录已删除，但本地文件清理失败，请联系管理员处理", ex);
+        }
+    }
+
+    private void deleteUploadedFileQuietly(Path target) {
+        try {
+            Files.deleteIfExists(target);
+        } catch (IOException ex) {
+            log.warn("Delete invalid uploaded file failed, filePath={}", target, ex);
+        }
     }
 
     private void cleanupFailedIngest(Long documentId) {

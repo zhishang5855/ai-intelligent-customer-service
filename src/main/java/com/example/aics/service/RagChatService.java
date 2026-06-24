@@ -28,10 +28,12 @@ import java.util.stream.Collectors;
 public class RagChatService {
 
     private static final Logger log = LoggerFactory.getLogger(RagChatService.class);
+    private static final String NO_RAG_SOURCE_ANSWER = "当前知识库中没有找到相关信息，建议联系人工客服。";
 
     private final ChatClient chatClient;
     private final VectorSearchService vectorSearchService;
     private final ConversationService conversationService;
+    private final KnowledgeService knowledgeService;
     private final ObjectMapper objectMapper;
     private final String ragPromptTemplate;
     private final String generalPromptTemplate;
@@ -41,12 +43,14 @@ public class RagChatService {
     public RagChatService(ChatClient.Builder chatClientBuilder,
                           VectorSearchService vectorSearchService,
                           ConversationService conversationService,
+                          KnowledgeService knowledgeService,
                           ObjectMapper objectMapper,
                           @Value("${spring.ai.openai.api-key:}") String chatApiKey,
                           @Value("${spring.ai.openai.base-url:}") String chatBaseUrl) throws IOException {
         this.chatClient = chatClientBuilder.build();
         this.vectorSearchService = vectorSearchService;
         this.conversationService = conversationService;
+        this.knowledgeService = knowledgeService;
         this.objectMapper = objectMapper;
         this.chatApiKey = chatApiKey;
         this.chatBaseUrl = chatBaseUrl;
@@ -55,10 +59,13 @@ public class RagChatService {
     }
 
     public ChatResponse chat(ChatRequest request) {
-        validateChatConfig();
         ChatExecution execution = prepareExecution(request);
 
-        String answer = callChatModel(execution.prompt());
+        String answer = execution.fixedAnswer();
+        if (answer == null) {
+            validateChatConfig();
+            answer = callChatModel(execution.prompt());
+        }
 
         conversationService.saveMessage(execution.conversation().getId(), "assistant", answer, toJson(execution.sources()));
 
@@ -70,7 +77,6 @@ public class RagChatService {
     }
 
     public SseEmitter stream(ChatRequest request) {
-        validateChatConfig();
         ChatExecution execution = prepareExecution(request);
         SseEmitter emitter = new SseEmitter(120_000L);
         StringBuffer answerBuffer = new StringBuffer();
@@ -83,6 +89,21 @@ public class RagChatService {
             return emitter;
         }
 
+        if (execution.fixedAnswer() != null) {
+            String answer = execution.fixedAnswer();
+            sendEvent(emitter, "token", answer);
+            conversationService.saveMessage(
+                    execution.conversation().getId(),
+                    "assistant",
+                    answer,
+                    toJson(execution.sources())
+            );
+            sendEvent(emitter, "done", "");
+            emitter.complete();
+            return emitter;
+        }
+
+        validateChatConfig();
         callChatModelStream(execution.prompt()).subscribe(
                 chunk -> {
                     answerBuffer.append(chunk);
@@ -119,16 +140,19 @@ public class RagChatService {
 
         String history = conversationService.recentHistory(conversation.getId(), 8);
         boolean useKnowledgeBase = request.getKnowledgeBaseId() != null;
-        List<SourceChunk> sources = useKnowledgeBase
-                ? vectorSearchService.search(request.getKnowledgeBaseId(), request.getQuestion())
-                : List.of();
+        List<SourceChunk> sources = List.of();
         if (useKnowledgeBase) {
+            knowledgeService.ensureKnowledgeBaseOwned(request.getUserId(), request.getKnowledgeBaseId());
+            sources = vectorSearchService.search(request.getKnowledgeBaseId(), request.getQuestion());
             logRetrievedSources(request.getKnowledgeBaseId(), sources);
+            if (sources.isEmpty()) {
+                return new ChatExecution(conversation, sources, null, NO_RAG_SOURCE_ANSWER);
+            }
         }
         String prompt = useKnowledgeBase
                 ? buildRagPrompt(request.getQuestion(), history, sources)
                 : buildGeneralPrompt(request.getQuestion(), history);
-        return new ChatExecution(conversation, sources, prompt);
+        return new ChatExecution(conversation, sources, prompt, null);
     }
 
     private void validateChatConfig() {
@@ -211,22 +235,13 @@ public class RagChatService {
             return;
         }
         sources.forEach(source -> log.info(
-                "RAG source: knowledgeBaseId={}, chunkId={}, documentId={}, documentName={}, score={}, contentPreview={}",
+                "RAG source: knowledgeBaseId={}, chunkId={}, documentId={}, documentName={}, score={}",
                 knowledgeBaseId,
                 source.getChunkId(),
                 source.getDocumentId(),
                 source.getDocumentName(),
-                String.format("%.4f", source.getScore()),
-                preview(source.getContent())
+                String.format("%.4f", source.getScore())
         ));
-    }
-
-    private String preview(String content) {
-        if (content == null || content.isBlank()) {
-            return "";
-        }
-        String normalized = content.replaceAll("\\s+", " ").trim();
-        return normalized.length() > 120 ? normalized.substring(0, 120) + "..." : normalized;
     }
 
     private String readPrompt(String location) throws IOException {
@@ -244,7 +259,7 @@ public class RagChatService {
         }
     }
 
-    private record ChatExecution(Conversation conversation, List<SourceChunk> sources, String prompt) {
+    private record ChatExecution(Conversation conversation, List<SourceChunk> sources, String prompt, String fixedAnswer) {
     }
 
     private record StreamMeta(Long conversationId) {
