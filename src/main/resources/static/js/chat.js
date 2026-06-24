@@ -139,6 +139,8 @@
         clearInitialState();
         appendMessage("user", question);
         els.questionInput.value = "";
+        const assistantBubble = appendMessage("assistant", "");
+        let streamedAnswer = "";
 
         try {
             const payload = {
@@ -150,21 +152,30 @@
                 payload.knowledgeBaseId = Number(knowledgeBaseId);
             }
 
-            const response = await window.AicsApi.requestJson("/api/chat", {
-                method: "POST",
-                headers: {"Content-Type": "application/json"},
-                body: JSON.stringify(payload)
+            await streamChat(payload, {
+                onMeta: function (meta) {
+                    state.conversationId = meta.conversationId || state.conversationId;
+                    updateConversationText();
+                    saveConversationHistory(question);
+                    renderConversationHistory();
+                },
+                onSources: function (sources) {
+                    renderSources(sources || []);
+                },
+                onToken: function (token) {
+                    streamedAnswer += token;
+                    renderMarkdownInto(assistantBubble, streamedAnswer);
+                },
+                onError: function (message) {
+                    renderMarkdownInto(assistantBubble, "请求失败：" + message);
+                    showToast(message, "error");
+                }
             });
-            const data = response.data || {};
-            state.conversationId = data.conversationId || state.conversationId;
-            updateConversationText();
-            saveConversationHistory(question);
-            renderConversationHistory();
-            appendMessage("assistant", data.answer || "未返回回答");
-            renderSources(data.sources || []);
-            showToast("回答已生成", "success");
+            if (streamedAnswer) {
+                showToast("回答已生成", "success");
+            }
         } catch (error) {
-            appendMessage("assistant", "请求失败：" + error.message);
+            renderMarkdownInto(assistantBubble, "请求失败：" + error.message);
             showToast(error.message, "error");
         } finally {
             setBusy(false);
@@ -181,12 +192,85 @@
 
         const bubble = document.createElement("div");
         bubble.className = "message-bubble";
-        bubble.textContent = content;
+        if (role === "assistant") {
+            bubble.classList.add("markdown-body");
+            renderMarkdownInto(bubble, content);
+        } else {
+            bubble.textContent = content;
+        }
 
         wrapper.appendChild(meta);
         wrapper.appendChild(bubble);
         els.messageList.appendChild(wrapper);
         els.messageList.scrollTop = els.messageList.scrollHeight;
+        return bubble;
+    }
+
+    async function streamChat(payload, handlers) {
+        const headers = {"Content-Type": "application/json"};
+        const token = window.AicsAuth.getToken();
+        if (token) {
+            headers["X-Auth-Token"] = token;
+        }
+
+        const response = await fetch("/api/chat/stream", {
+            method: "POST",
+            headers: headers,
+            body: JSON.stringify(payload)
+        });
+
+        if (!response.ok || !response.body) {
+            let message = "请求失败：" + response.status;
+            try {
+                const body = await response.json();
+                message = body.message || message;
+            } catch (error) {
+                // Ignore non-JSON error bodies.
+            }
+            throw new Error(message);
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder("utf-8");
+        let buffer = "";
+        while (true) {
+            const result = await reader.read();
+            if (result.done) {
+                break;
+            }
+            buffer += decoder.decode(result.value, {stream: true});
+            const frames = buffer.split(/\r?\n\r?\n/);
+            buffer = frames.pop() || "";
+            frames.forEach(function (frame) {
+                handleSseFrame(frame, handlers);
+            });
+        }
+        if (buffer.trim()) {
+            handleSseFrame(buffer, handlers);
+        }
+    }
+
+    function handleSseFrame(frame, handlers) {
+        const lines = frame.split(/\r?\n/);
+        let eventName = "message";
+        const dataLines = [];
+        lines.forEach(function (line) {
+            if (line.startsWith("event:")) {
+                eventName = line.slice(6).trim();
+            } else if (line.startsWith("data:")) {
+                dataLines.push(line.slice(5).replace(/^ /, ""));
+            }
+        });
+        const data = dataLines.join("\n");
+        if (eventName === "meta") {
+            handlers.onMeta(JSON.parse(data || "{}"));
+        } else if (eventName === "sources") {
+            handlers.onSources(JSON.parse(data || "[]"));
+        } else if (eventName === "token") {
+            handlers.onToken(data);
+        } else if (eventName === "error") {
+            handlers.onError(data || "模型调用失败");
+        }
     }
 
     function renderSources(sources) {
@@ -293,6 +377,91 @@
         if (empty) {
             empty.remove();
         }
+    }
+
+    function renderMarkdownInto(element, markdown) {
+        element.innerHTML = renderMarkdown(markdown || "");
+        els.messageList.scrollTop = els.messageList.scrollHeight;
+    }
+
+    function renderMarkdown(markdown) {
+        const blocks = [];
+        let source = escapeHtml(markdown);
+        source = source.replace(/```([\s\S]*?)```/g, function (_, code) {
+            const token = "\u0000CODE" + blocks.length + "\u0000";
+            blocks.push("<pre><code>" + code.trim() + "</code></pre>");
+            return token;
+        });
+
+        const lines = source.split(/\r?\n/);
+        const html = [];
+        let listType = "";
+        lines.forEach(function (line) {
+            const trimmed = line.trim();
+            if (!trimmed) {
+                closeList();
+                return;
+            }
+            const heading = trimmed.match(/^(#{1,4})\s+(.+)$/);
+            if (heading) {
+                closeList();
+                html.push("<h" + heading[1].length + ">" + renderInlineMarkdown(heading[2]) + "</h" + heading[1].length + ">");
+                return;
+            }
+            const unordered = trimmed.match(/^[-*]\s+(.+)$/);
+            if (unordered) {
+                openList("ul");
+                html.push("<li>" + renderInlineMarkdown(unordered[1]) + "</li>");
+                return;
+            }
+            const ordered = trimmed.match(/^\d+\.\s+(.+)$/);
+            if (ordered) {
+                openList("ol");
+                html.push("<li>" + renderInlineMarkdown(ordered[1]) + "</li>");
+                return;
+            }
+            closeList();
+            html.push("<p>" + renderInlineMarkdown(trimmed) + "</p>");
+        });
+        closeList();
+
+        let rendered = html.join("");
+        blocks.forEach(function (block, index) {
+            rendered = rendered.replace("\u0000CODE" + index + "\u0000", block);
+        });
+        return rendered;
+
+        function openList(type) {
+            if (listType === type) {
+                return;
+            }
+            closeList();
+            listType = type;
+            html.push("<" + type + ">");
+        }
+
+        function closeList() {
+            if (listType) {
+                html.push("</" + listType + ">");
+                listType = "";
+            }
+        }
+    }
+
+    function renderInlineMarkdown(text) {
+        return text
+                .replace(/`([^`]+)`/g, "<code>$1</code>")
+                .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+                .replace(/\[([^\]]+)]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+    }
+
+    function escapeHtml(value) {
+        return String(value)
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#39;");
     }
 
     function saveConversationHistory(question) {

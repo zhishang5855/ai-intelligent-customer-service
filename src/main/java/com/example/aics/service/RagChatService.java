@@ -14,6 +14,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.StreamUtils;
 import org.springframework.util.StringUtils;
 import org.springframework.web.client.RestClientException;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+import reactor.core.publisher.Flux;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -50,6 +52,60 @@ public class RagChatService {
 
     public ChatResponse chat(ChatRequest request) {
         validateChatConfig();
+        ChatExecution execution = prepareExecution(request);
+
+        String answer = callChatModel(execution.prompt());
+
+        conversationService.saveMessage(execution.conversation().getId(), "assistant", answer, toJson(execution.sources()));
+
+        ChatResponse response = new ChatResponse();
+        response.setConversationId(execution.conversation().getId());
+        response.setAnswer(answer);
+        response.setSources(execution.sources());
+        return response;
+    }
+
+    public SseEmitter stream(ChatRequest request) {
+        validateChatConfig();
+        ChatExecution execution = prepareExecution(request);
+        SseEmitter emitter = new SseEmitter(120_000L);
+        StringBuffer answerBuffer = new StringBuffer();
+
+        try {
+            sendEvent(emitter, "meta", objectMapper.writeValueAsString(new StreamMeta(execution.conversation().getId())));
+            sendEvent(emitter, "sources", toJson(execution.sources()));
+        } catch (IOException ex) {
+            emitter.completeWithError(ex);
+            return emitter;
+        }
+
+        callChatModelStream(execution.prompt()).subscribe(
+                chunk -> {
+                    answerBuffer.append(chunk);
+                    sendEvent(emitter, "token", chunk);
+                },
+                error -> {
+                    String message = normalizeChatError(error).getMessage();
+                    sendEvent(emitter, "error", message);
+                    emitter.complete();
+                },
+                () -> {
+                    String answer = answerBuffer.toString();
+                    conversationService.saveMessage(
+                            execution.conversation().getId(),
+                            "assistant",
+                            answer,
+                            toJson(execution.sources())
+                    );
+                    sendEvent(emitter, "done", "");
+                    emitter.complete();
+                }
+        );
+
+        return emitter;
+    }
+
+    private ChatExecution prepareExecution(ChatRequest request) {
         Conversation conversation = conversationService.getOrCreate(
                 request.getConversationId(),
                 request.getUserId(),
@@ -65,16 +121,7 @@ public class RagChatService {
         String prompt = useKnowledgeBase
                 ? buildRagPrompt(request.getQuestion(), history, sources)
                 : buildGeneralPrompt(request.getQuestion(), history);
-
-        String answer = callChatModel(prompt);
-
-        conversationService.saveMessage(conversation.getId(), "assistant", answer, toJson(sources));
-
-        ChatResponse response = new ChatResponse();
-        response.setConversationId(conversation.getId());
-        response.setAnswer(answer);
-        response.setSources(sources);
-        return response;
+        return new ChatExecution(conversation, sources, prompt);
     }
 
     private void validateChatConfig() {
@@ -99,6 +146,35 @@ public class RagChatService {
             throw new AiChatException("Chat 模型调用失败：" + message, ex);
         } catch (RuntimeException ex) {
             throw new AiChatException("Chat 模型调用失败：" + ex.getMessage(), ex);
+        }
+    }
+
+    private Flux<String> callChatModelStream(String prompt) {
+        return chatClient.prompt()
+                .user(prompt)
+                .stream()
+                .content()
+                .onErrorMap(this::normalizeChatError);
+    }
+
+    private AiChatException normalizeChatError(Throwable error) {
+        if (error instanceof AiChatException aiChatException) {
+            return aiChatException;
+        }
+        String message = error.getMessage() == null ? "" : error.getMessage();
+        if (message.contains("server authentication")
+                || message.contains("401")
+                || message.contains("Unauthorized")) {
+            return new AiChatException("Chat 模型认证失败，请检查 config/local-secrets.yml 中的 API Key、base-url 和模型名称。当前 base-url: " + chatBaseUrl, error);
+        }
+        return new AiChatException("Chat 模型调用失败：" + message, error);
+    }
+
+    private void sendEvent(SseEmitter emitter, String name, String data) {
+        try {
+            emitter.send(SseEmitter.event().name(name).data(data == null ? "" : data));
+        } catch (IOException ex) {
+            emitter.completeWithError(ex);
         }
     }
 
@@ -135,5 +211,11 @@ public class RagChatService {
         } catch (JsonProcessingException e) {
             return "[]";
         }
+    }
+
+    private record ChatExecution(Conversation conversation, List<SourceChunk> sources, String prompt) {
+    }
+
+    private record StreamMeta(Long conversationId) {
     }
 }
